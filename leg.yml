@@ -1,0 +1,10 @@
+---
+:name: camping
+:version: "0.0.1"
+:title: Build Your Own (Obfuscated) Web Microframework
+:rouge_theme: github
+:bold_weight: 500
+:repo_author:
+  :name: snaptoken
+  :email: snaptoken@viewsourcecode.org
+...

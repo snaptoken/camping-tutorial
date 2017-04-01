@@ -1,0 +1,563 @@
+~~~ step: setup
+diff --git a/Gemfile b/Gemfile
+new file mode 100644
+--- /dev/null
++++ b/Gemfile
+@@ -0,0 +1,3 @@
++source 'https://rubygems.org'
++gemspec
++
+diff --git a/bin/mycamping b/bin/mycamping
+new file mode 100755
+--- /dev/null
++++ b/bin/mycamping
+@@ -0,0 +1,9 @@
++#!/usr/bin/env ruby
++
++$:.unshift File.dirname(__FILE__) + "/../lib"
++
++require 'mycamping'
++require 'rack'
++
++Rack::Server.start
++
+diff --git a/examples/nuts.rb b/examples/nuts.rb
+new file mode 100644
+--- /dev/null
++++ b/examples/nuts.rb
+@@ -0,0 +1,2 @@
++Camping.goes :Nuts
++
+diff --git a/lib/mycamping.rb b/lib/mycamping.rb
+new file mode 100644
+--- /dev/null
++++ b/lib/mycamping.rb
+@@ -0,0 +1,12 @@
++module Camping
++  class<<self
++    def goes m
++      eval(IO.read(__FILE__).gsub(/Camping/,m.to_s),TOPLEVEL_BINDING)
++    end
++    
++    def call e
++      [200,{},['Hi!']]
++    end
++  end
++end
++
+diff --git a/mycamping.gemspec b/mycamping.gemspec
+new file mode 100644
+--- /dev/null
++++ b/mycamping.gemspec
+@@ -0,0 +1,10 @@
++Gem::Specification.new do |s|
++  s.name = 'mycamping'
++  s.version = '2.1'
++  s.summary = 'miniature rails for anyone'
++  s.author = 'why the lucky stiff'
++  s.files = Dir.glob('{bin,lib,examples}/**/*')
++  s.executables = ['mycamping']
++  s.add_dependency 'rack'
++end
++
+
+~~~ step: server
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,2 @@
++*.swp
++
+diff --git a/bin/mycamping b/bin/mycamping
+--- a/bin/mycamping
++++ b/bin/mycamping
+@@ -3,7 +3,7 @@
+ $:.unshift File.dirname(__FILE__) + "/../lib"
+ 
+ require 'mycamping'
+-require 'rack'
++require 'mycamping/server'
+ 
+-Rack::Server.start
++Camping::Server.start
+ 
+diff --git a/lib/mycamping.rb b/lib/mycamping.rb
+--- a/lib/mycamping.rb
++++ b/lib/mycamping.rb
+@@ -5,7 +5,7 @@ module Camping
+     end
+     
+     def call e
+-      [200,{},['Hi!']]
++      [404,{"Content-Type"=>"text/html"},["<h1>Cam\ping Problem!</h1><h2>/ not found</h2>"]]
+     end
+   end
+ end
+diff --git a/lib/mycamping/server.rb b/lib/mycamping/server.rb
+new file mode 100644
+--- /dev/null
++++ b/lib/mycamping/server.rb
+@@ -0,0 +1,18 @@
++require 'rack'
++
++module Camping
++  class Server < Rack::Server
++    def default_options
++      super.merge({
++        :Port => 3301
++      })
++    end
++
++    def start
++      name = server.name[/\w+$/]
++      puts "** Starting #{name} on #{options[:Host]}:#{options[:Port]}"
++      super
++    end
++  end
++end
++
+
+~~~ step: s-p-constants
+diff --git a/lib/mycamping.rb b/lib/mycamping.rb
+--- a/lib/mycamping.rb
++++ b/lib/mycamping.rb
+@@ -1,11 +1,14 @@
+ module Camping
++  S=IO.read(__FILE__)rescue nil
++  P="<h1>Cam\ping Problem!</h1><h2>/ not found</h2>"
++
+   class<<self
+     def goes m
+-      eval(IO.read(__FILE__).gsub(/Camping/,m.to_s),TOPLEVEL_BINDING)
++      eval(S.gsub(/Camping/,m.to_s),TOPLEVEL_BINDING)
+     end
+     
+     def call e
+-      [404,{"Content-Type"=>"text/html"},["<h1>Cam\ping Problem!</h1><h2>/ not found</h2>"]]
++      [404,{"Content-Type"=>"text/html"},[P]]
+     end
+   end
+ end
+
+~~~ step: routing
+diff --git a/examples/nuts.rb b/examples/nuts.rb
+--- a/examples/nuts.rb
++++ b/examples/nuts.rb
+@@ -1,2 +1,16 @@
+ Camping.goes :Nuts
+ 
++module Nuts::Controllers
++  class Clock < R '/', '/time'
++    def get
++      Time.now.to_s
++    end
++  end
++
++  class Another < R '/another'
++    def get
++      'another controller'
++    end
++  end
++end
++
+diff --git a/lib/mycamping.rb b/lib/mycamping.rb
+--- a/lib/mycamping.rb
++++ b/lib/mycamping.rb
+@@ -1,14 +1,71 @@
++require"rack"
++
++class Object
++  def meta_def m,&b
++    (class<<self;self end).send:define_method,m,&b
++  end
++end
++
+ module Camping
+   S=IO.read(__FILE__)rescue nil
+   P="<h1>Cam\ping Problem!</h1><h2>/ not found</h2>"
+ 
++  module Base
++    attr_accessor:status,:headers,:body
++
++    def to_a
++      Rack::Response.new(@body,@status,@headers).to_a
++    end
++
++    def initialize m
++      @headers,@status,@method=
++      {'Content-Type'=>'text/html'},200,m
++    end
++
++    def service
++      r=send@method
++      @body||=r
++      self
++    end
++  end
++
++  module Controllers
++    @r=[]
++    class<<self
++      def R *u
++        r=@r
++        Class.new{
++          meta_def(:urls){u}
++          meta_def(:inherited){|x|r<<x}
++        }
++      end
++
++      def D p,m
++        @r.map{|k|
++          k.urls.map{|x|
++            return[k,m]if p=~/^#{x}\/?$/
++          }
++        }
++      end
++
++      def M
++        constants.map{|c|
++          const_get(c).send:include,Base
++        }
++      end
++    end
++  end
++  X = Controllers
++
+   class<<self
+     def goes m
+       eval(S.gsub(/Camping/,m.to_s),TOPLEVEL_BINDING)
+     end
+     
+     def call e
+-      [404,{"Content-Type"=>"text/html"},[P]]
++      X.M
++      k,m=X.D e["PATH_INFO"],e['REQUEST_METHOD'].downcase
++      k.new(m).service.to_a
+     end
+   end
+ end
+
+~~~ step: handle-404
+diff --git a/lib/mycamping.rb b/lib/mycamping.rb
+--- a/lib/mycamping.rb
++++ b/lib/mycamping.rb
+@@ -8,22 +8,26 @@ end
+ 
+ module Camping
+   S=IO.read(__FILE__)rescue nil
+-  P="<h1>Cam\ping Problem!</h1><h2>/ not found</h2>"
++  P="<h1>Cam\ping Problem!</h1><h2>%s</h2>"
+ 
+   module Base
+     attr_accessor:status,:headers,:body
+ 
++    def r404 p
++      P%"#{p} not found"
++    end
++
+     def to_a
+       Rack::Response.new(@body,@status,@headers).to_a
+     end
+ 
+     def initialize m
+       @headers,@status,@method=
+-      {'Content-Type'=>'text/html'},200,m
++      {'Content-Type'=>'text/html'},m=~/r(\d+)/?$1.to_i: 200,m
+     end
+ 
+-    def service
+-      r=send@method
++    def service*a
++      r=send@method,*a
+       @body||=r
+       self
+     end
+@@ -32,7 +36,7 @@ module Camping
+   module Controllers
+     @r=[]
+     class<<self
+-      def R *u
++      def R*u
+         r=@r
+         Class.new{
+           meta_def(:urls){u}
+@@ -46,6 +50,7 @@ module Camping
+             return[k,m]if p=~/^#{x}\/?$/
+           }
+         }
++        [I,'r404',p]
+       end
+ 
+       def M
+@@ -54,8 +59,10 @@ module Camping
+         }
+       end
+     end
++
++    I=R()
+   end
+-  X = Controllers
++  X=Controllers
+ 
+   class<<self
+     def goes m
+@@ -64,8 +71,8 @@ module Camping
+     
+     def call e
+       X.M
+-      k,m=X.D e["PATH_INFO"],e['REQUEST_METHOD'].downcase
+-      k.new(m).service.to_a
++      k,m,*a=X.D e["PATH_INFO"],e['REQUEST_METHOD'].downcase
++      k.new(m).service(*a).to_a
+     end
+   end
+ end
+
+~~~ step: handle-50x
+diff --git a/examples/nuts.rb b/examples/nuts.rb
+--- a/examples/nuts.rb
++++ b/examples/nuts.rb
+@@ -8,7 +8,7 @@ module Nuts::Controllers
+   end
+ 
+   class Another < R '/another'
+-    def get
++    def post
+       'another controller'
+     end
+   end
+diff --git a/lib/mycamping.rb b/lib/mycamping.rb
+--- a/lib/mycamping.rb
++++ b/lib/mycamping.rb
+@@ -17,6 +17,14 @@ module Camping
+       P%"#{p} not found"
+     end
+ 
++    def r500 k,m,e
++      raise e
++    end
++
++    def r501 m
++      P%"#{m.upcase} not implemented"
++    end
++
+     def to_a
+       Rack::Response.new(@body,@status,@headers).to_a
+     end
+@@ -47,7 +55,7 @@ module Camping
+       def D p,m
+         @r.map{|k|
+           k.urls.map{|x|
+-            return[k,m]if p=~/^#{x}\/?$/
++            return(k.method_defined?m)?[k,m]:[I,'r501',m]if p=~/^#{x}\/?$/
+           }
+         }
+         [I,'r404',p]
+@@ -73,6 +81,13 @@ module Camping
+       X.M
+       k,m,*a=X.D e["PATH_INFO"],e['REQUEST_METHOD'].downcase
+       k.new(m).service(*a).to_a
++    rescue
++      r500(:I,k,m,$!).to_a
++    end
++
++    def method_missing m,c,*a
++      X.M
++      X.const_get(c).new(m.to_s).service *a
+     end
+   end
+ end
+
+~~~ step: inferred-routes
+diff --git a/examples/nuts.rb b/examples/nuts.rb
+--- a/examples/nuts.rb
++++ b/examples/nuts.rb
+@@ -1,15 +1,27 @@
+ Camping.goes :Nuts
+ 
+ module Nuts::Controllers
+-  class Clock < R '/', '/time'
++  class Index
++    def get
++      'you are home'
++    end
++  end
++
++  class Clock
+     def get
+       Time.now.to_s
+     end
+   end
+ 
+-  class Another < R '/another'
+-    def post
+-      'another controller'
++  class PageX
++    def get(title)
++      "you are on the page called #{title}"
++    end
++  end
++
++  class PageXSectionN
++    def get(title, section_id)
++      "you are on the page called #{title}, subsection #{section_id}"
+     end
+   end
+ end
+diff --git a/lib/mycamping.rb b/lib/mycamping.rb
+--- a/lib/mycamping.rb
++++ b/lib/mycamping.rb
+@@ -9,6 +9,14 @@ end
+ module Camping
+   S=IO.read(__FILE__)rescue nil
+   P="<h1>Cam\ping Problem!</h1><h2>%s</h2>"
++  U=Rack::Utils
++
++  class H<Hash
++    def method_missing m,*a
++      m.to_s=~/=$/?self[$`]=a[0]:a==[]?self[m.to_s]:super
++    end
++    undef id,type if ??==63
++  end
+ 
+   module Base
+     attr_accessor:status,:headers,:body
+@@ -55,15 +63,21 @@ module Camping
+       def D p,m
+         @r.map{|k|
+           k.urls.map{|x|
+-            return(k.method_defined?m)?[k,m]:[I,'r501',m]if p=~/^#{x}\/?$/
++            return(k.method_defined?m)?
++              [k,m,*$~[1..-1].map{|x|U.unescape(x)}]:[I,'r501',m]if p=~/^#{x}\/?$/
+           }
+         }
+         [I,'r404',p]
+       end
+ 
++      N=H.new{|_,x|x.downcase}.merge!"N"=>'(\d+)',"X"=>'([^/]+)',"Index"=>''
++
+       def M
+         constants.map{|c|
+-          const_get(c).send:include,Base
++          k=const_get c
++          k.send:include,Base
++          @r=[k]+@r if@r-[k]==@r
++          k.meta_def(:urls){["/#{c.to_s.scan(/.[^A-Z]*/).map(&N.method(:[]))*'/'}"]}if !k.respond_to?:urls
+         }
+       end
+     end
+
+~~~ step: uncommitted-changes
+diff --git a/.gitignore b/.gitignore
+old mode 100644
+new mode 100755
+diff --git a/Gemfile b/Gemfile
+old mode 100644
+new mode 100755
+diff --git a/Gemfile.lock b/Gemfile.lock
+new file mode 100755
+--- /dev/null
++++ b/Gemfile.lock
+@@ -0,0 +1,19 @@
++PATH
++  remote: .
++  specs:
++    mycamping (2.1)
++      rack
++
++GEM
++  remote: https://rubygems.org/
++  specs:
++    rack (2.0.1)
++
++PLATFORMS
++  ruby
++
++DEPENDENCIES
++  mycamping!
++
++BUNDLED WITH
++   1.12.5
+diff --git a/examples/nuts.rb b/examples/nuts.rb
+old mode 100644
+new mode 100755
+--- a/examples/nuts.rb
++++ b/examples/nuts.rb
+@@ -3,26 +3,14 @@ Camping.goes :Nuts
+ module Nuts::Controllers
+   class Index
+     def get
+-      'you are home'
+-    end
+-  end
+-
+-  class Clock
+-    def get
+-      Time.now.to_s
+-    end
+-  end
+-
+-  class PageX
+-    def get(title)
+-      "you are on the page called #{title}"
+-    end
+-  end
+-
+-  class PageXSectionN
+-    def get(title, section_id)
+-      "you are on the page called #{title}, subsection #{section_id}"
++      render :home
+     end
+   end
+ end
+ 
++module Nuts::Views
++  def home
++    'you are home'
++  end
++end
++
+diff --git a/lib/mycamping.rb b/lib/mycamping.rb
+old mode 100644
+new mode 100755
+--- a/lib/mycamping.rb
++++ b/lib/mycamping.rb
+@@ -21,6 +21,14 @@ module Camping
+   module Base
+     attr_accessor:status,:headers,:body
+ 
++    def render v,*a,&b
++      if Views.method_defined? v
++        send v,*a,&b
++      else
++        raise"no template: #{v}"
++      end
++    end
++
+     def r404 p
+       P%"#{p} not found"
+     end
+@@ -90,7 +98,7 @@ module Camping
+     def goes m
+       eval(S.gsub(/Camping/,m.to_s),TOPLEVEL_BINDING)
+     end
+-    
++
+     def call e
+       X.M
+       k,m,*a=X.D e["PATH_INFO"],e['REQUEST_METHOD'].downcase
+@@ -104,5 +112,7 @@ module Camping
+       X.const_get(c).new(m.to_s).service *a
+     end
+   end
++
++  module Views end
+ end
+ 
+diff --git a/lib/mycamping/server.rb b/lib/mycamping/server.rb
+old mode 100644
+new mode 100755
+diff --git a/mycamping.gemspec b/mycamping.gemspec
+old mode 100644
+new mode 100755
